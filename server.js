@@ -1,5 +1,6 @@
 const express = require('express')
 const path = require('path')
+const sharp = require('sharp')
 const multer = require('multer')
 const ffmpeg = require('fluent-ffmpeg')
 const fs = require('fs')
@@ -40,17 +41,17 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
   const heightNum = parseInt(height) || 0
   const inputPath = path.resolve(req.file.path)
   const timestamp = Date.now()
-  
+
   // Ensure outputs directory exists and is writable
   if (!fs.existsSync(outputsDir)) {
     fs.mkdirSync(outputsDir, { recursive: true, mode: 0o755 })
   }
-  
+
   // Verify input file exists
   if (!fs.existsSync(inputPath)) {
     return res.status(400).json({ error: 'Input file not found' })
   }
-  
+
   // Use simple filenames to avoid path issues
   const outputFilename = `${timestamp}.gif`
   const paletteFilename = `palette_${timestamp}.png`
@@ -62,11 +63,9 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
   console.log('Palette path:', palettePath)
   console.log('Outputs dir exists:', fs.existsSync(outputsDir))
   console.log('FPS:', fps, 'Width:', widthNum, 'Height:', heightNum || 'auto')
-  
+
   // Determine size string for FFmpeg
-  const sizeString = heightNum > 0 
-    ? `${widthNum}x${heightNum}` 
-    : `${widthNum}:-1`
+  const sizeString = heightNum > 0 ? `${widthNum}x${heightNum}` : `${widthNum}:-1`
 
   try {
     // Step 1: Generate palette (high quality)
@@ -75,14 +74,14 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
         .videoFilters([
           `fps=${fps}`,
           `scale=${sizeString}:flags=lanczos`,
-          'palettegen=max_colors=256'
+          'palettegen=max_colors=256',
         ])
         .outputOptions(['-y']) // Overwrite output file
         .output(palettePath)
-        .on('start', (commandLine) => {
+        .on('start', commandLine => {
           console.log('Palette generation command:', commandLine)
         })
-        .on('progress', (progress) => {
+        .on('progress', progress => {
           if (progress.percent) {
             console.log('Palette progress:', Math.round(progress.percent) + '%')
           }
@@ -100,30 +99,31 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
           console.error('FFmpeg stdout:', stdout)
           reject(err)
         })
-      
+
       command.run()
     })
 
     // Step 2: Create GIF with palette (high quality)
     await new Promise((resolve, reject) => {
-      const scaleFilter = heightNum > 0
-        ? `scale=${widthNum}:${heightNum}:flags=lanczos`
-        : `scale=${widthNum}:-1:flags=lanczos`
-      
+      const scaleFilter =
+        heightNum > 0
+          ? `scale=${widthNum}:${heightNum}:flags=lanczos`
+          : `scale=${widthNum}:-1:flags=lanczos`
+
       ffmpeg(inputPath)
         .input(palettePath)
         .complexFilter([
           `[0:v]fps=${fps},${scaleFilter}[x]`,
-          '[x][1:v]paletteuse=dither=bayer:bayer_scale=5'
+          '[x][1:v]paletteuse=dither=bayer:bayer_scale=5',
         ])
         .outputOptions([
-          '-loop 0' // Infinite loop
+          '-loop 0', // Infinite loop
         ])
         .output(outputPath)
-        .on('start', (commandLine) => {
+        .on('start', commandLine => {
           console.log('GIF creation command:', commandLine)
         })
-        .on('progress', (progress) => {
+        .on('progress', progress => {
           if (progress.percent) {
             console.log('GIF creation progress:', Math.round(progress.percent) + '%')
           }
@@ -148,7 +148,7 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
     // Send the GIF file
     res.setHeader('Content-Type', 'image/gif')
     res.setHeader('Content-Disposition', `attachment; filename="converted.gif"`)
-    res.sendFile(outputPath, (err) => {
+    res.sendFile(outputPath, err => {
       if (err) {
         console.error('Error sending file:', err)
       }
@@ -168,6 +168,37 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
       unlink(outputPath).catch(() => {})
     }
     res.status(500).json({ error: error.message || 'Conversion failed' })
+  }
+})
+
+// New Image Resize Endpoint
+app.post('/api/resize-image', upload.single('image'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No image file provided' })
+  }
+
+  const { width, height } = req.body
+  const widthNum = parseInt(width)
+  const heightNum = parseInt(height) || null // sharp uses null for auto-aspect
+  const inputPath = req.file.path
+  const outputPath = path.join(outputsDir, `resized-${Date.now()}-${req.file.originalname}`)
+
+  try {
+    await sharp(inputPath)
+      .resize(widthNum, heightNum, {
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .toFile(outputPath)
+
+    res.download(outputPath, `resized-${req.file.originalname}`, err => {
+      // Cleanup
+      fs.unlinkSync(inputPath)
+      setTimeout(() => fs.unlinkSync(outputPath), 5000)
+    })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: 'Image processing failed' })
   }
 })
 
