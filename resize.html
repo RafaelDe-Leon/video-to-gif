@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+  <script src="resize.js" defer></script>
+  <title>Image Resizer</title>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🖼️ Image Resizer</h1>
+      <p>JPG, PNG, GIF, WEBP (upload any size)</p>
+    </div>
+
+    <nav class="page-nav" aria-label="Page navigation">
+      <a class="page-link" href="gif.html">Video to GIF</a>
+      <a class="page-link active" href="resize.html">Image Resizer</a>
+    </nav>
+
+    <div class="warning" id="warning"></div>
+
+    <div class="upload-area" id="uploadArea">
+      <input type="file" id="fileInput" class="file-input" accept=".jpg,.jpeg,.png,.gif,.webp">
+      <div class="upload-icon">🖼️</div>
+      <div>
+        <strong>Click to upload image</strong>
+        <div class="file-name" id="fileName">Choose an image</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Width (px)</label>
+        <input type="number" id="widthInput" class="input-number" min="1" value="300">
+      </div>
+      <div class="control-group">
+        <label class="control-label">Height (px)</label>
+        <input type="number" id="heightInput" class="input-number" min="1" value="300">
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: -0.5rem;">
+      <input type="checkbox" id="lockAspect" checked style="width: 18px; height: 18px; cursor: pointer;">
+      <label for="lockAspect" style="font-size: 0.875rem; color: #6b7280; cursor: pointer;">
+        Lock aspect ratio
+      </label>
+    </div>
+
+    <button id="resizeBtn" class="btn btn-primary" disabled>Resize & Download</button>
+
+    <div class="progress-container" id="progressContainer">
+      <div class="status-text" id="statusText">Processing...</div>
+    </div>
+  </div>
+</body>
+
+</html>
