@@ -1,233 +1,158 @@
-# Video to GIF Converter
+# Media Tools (Video to GIF + Image Tools)
 
-A simple, local video-to-GIF converter that runs on your server using Node.js and FFmpeg. Convert videos to high-quality GIFs with customizable frame rate and dimensions while maintaining aspect ratio.
+Local web app for:
+
+- converting videos to GIF,
+- resizing images,
+- compressing images/GIFs to a target file size.
+
+Everything runs through your local Node.js server.
 
 ## Features
 
-- 🎬 Convert videos to high-quality GIFs
-- 🗜️ Compress images and GIFs to a target file size (MB)
-- ⚡ Server-side processing (no browser limitations)
-- 🎨 Modern, clean UI
-- 📱 Responsive design
-- ⚙️ Customizable FPS (5-30) and dimensions
-- 🔒 Automatic aspect ratio preservation
-- 🎯 High-quality encoding with Lanczos scaling and Bayer dithering
+- 🎬 Video to GIF conversion with FPS and size controls
+- 🖼️ Image resizing with optional aspect-ratio lock
+- 🗜️ Image/GIF compression to a user-defined target size (MB)
+- 📁 Drag-and-drop + click upload across pages
+- 📱 Responsive UI with page navigation between tools
+
+## Pages
+
+- `http://localhost:8000/` or `http://localhost:8000/gif.html` → Video to GIF
+- `http://localhost:8000/resize.html` → Image Resizer
+- `http://localhost:8000/compress.html` → Image/GIF Compressor
 
 ## Requirements
 
-### 1. Node.js
+### 1) Node.js
 
-You need Node.js version 14 or higher installed on your system.
+Node.js 14+ is required.
 
-**Check if you have Node.js:**
 ```bash
 node --version
 ```
 
-**If not installed:**
+### 2) FFmpeg
 
-- **macOS**: Download from [nodejs.org](https://nodejs.org/) or use Homebrew:
-  ```bash
-  brew install node
-  ```
+FFmpeg is required for video/GIF processing.
 
-- **Linux (Ubuntu/Debian)**:
-  ```bash
-  curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-  sudo apt-get install -y nodejs
-  ```
-
-- **Windows**: Download the installer from [nodejs.org](https://nodejs.org/)
-
-### 2. FFmpeg
-
-FFmpeg is required for video processing. It must be installed on your system and accessible from the command line.
-
-**Check if you have FFmpeg:**
 ```bash
 ffmpeg -version
 ```
 
-**If not installed:**
+If FFmpeg is missing:
 
-- **macOS** (using Homebrew):
-  ```bash
-  brew install ffmpeg
-  ```
-
-- **Linux (Ubuntu/Debian)**:
-  ```bash
-  sudo apt update
-  sudo apt install ffmpeg
-  ```
-
-- **Windows**:
-  1. Download from [ffmpeg.org](https://ffmpeg.org/download.html)
-  2. Extract the zip file
-  3. Add the `bin` folder to your system PATH
-  4. Or use Chocolatey:
-     ```bash
-     choco install ffmpeg
-     ```
+- macOS: `brew install ffmpeg`
+- Linux (Ubuntu/Debian): `sudo apt update && sudo apt install ffmpeg`
+- Windows: install from ffmpeg.org and add `bin` to PATH (or use `choco install ffmpeg`)
 
 ## Installation
 
-1. **Navigate to the project directory:**
-   ```bash
-   cd /path/to/sandbox
-   ```
+```bash
+cd /path/to/video_to_gif
+npm install
+```
 
-2. **Install Node.js dependencies:**
-   ```bash
-   npm install
-   ```
+Installed dependencies include:
 
-   This will install:
-   - `express` - Web server
-   - `multer` - File upload handling
-   - `fluent-ffmpeg` - FFmpeg wrapper for Node.js
+- `express`
+- `multer`
+- `fluent-ffmpeg`
+- `sharp`
 
-## Usage
+## Run
 
-### Starting the Server
+```bash
+node server.js
+```
 
-1. **Start the server:**
-   ```bash
-   node server.js
-   ```
+Then open:
 
-2. **You should see:**
-   ```
-   Server running at http://localhost:8000
-   Open http://localhost:8000 in your browser to use the GIF converter
-   Note: Make sure FFmpeg is installed on your system
-   ```
+- `http://localhost:8000`
 
-3. **Open your browser and navigate to:**
-   ```
-   http://localhost:8000
-   ```
+## How to Use
 
-### Converting a Video to GIF
+### Video to GIF
 
-1. **Upload a video:**
-   - Click the upload area or drag and drop a video file
-   - Supported formats: MP4, MOV, WEBM, AVI
+1. Upload a video (`video/*`)
+2. Adjust FPS (5–30), width, and optional height
+3. Keep aspect lock on for automatic height
+4. Click **Convert to GIF**
+5. Download result
 
-2. **Adjust settings:**
-   - **Frame Rate (FPS)**: Use the slider (5-30 FPS)
-     - Lower FPS = smaller file size, choppier animation
-     - Higher FPS = larger file size, smoother animation
-   - **Width**: Enter custom width (100-1920px) or click preset buttons
-   - **Height**: Automatically calculated to maintain aspect ratio
-     - Toggle "Lock aspect ratio" to manually set height
+### Image Resizer
 
-3. **Click "Convert to GIF"**
+Supported input: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`
 
-4. **Wait for processing:**
-   - The conversion may take 1-5 minutes depending on video length
-   - Progress will be shown in real-time
+1. Upload image
+2. Set width/height
+3. Toggle aspect lock as needed
+4. Click **Resize & Download**
 
-5. **Download your GIF:**
-   - Once complete, click "Download GIF"
+### Image/GIF Compressor
 
-### Compressing an Image or GIF to Target Size
+Supported input: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`
 
-1. Open `http://localhost:8000/compress.html`
-2. Upload an image or GIF
-3. Enter your target size in MB (for example, 10)
-4. Click **Compress File**
-5. Download the compressed file once done
+1. Upload image or GIF
+2. Set target size in MB (example: `10`)
+3. Click **Compress File**
+4. Download compressed output
 
 Notes:
-- If exact target size is not possible, the app returns the closest smaller/lower-size result it can generate.
-- GIF compression uses iterative quality/scale reduction for best size reduction.
 
-## How It Works
+- If exact target size is not achievable, the app returns the closest practical result.
+- Compression response includes original/compressed sizes and target-achieved status.
 
-The conversion uses a two-pass encoding process for high quality:
+## API Endpoints
 
-1. **Palette Generation**: Analyzes the video to create an optimal color palette
-2. **GIF Creation**: Applies the palette to create the final GIF with:
-   - Lanczos scaling for high-quality resampling
-   - Bayer dithering for smooth color transitions
-   - 256-color palette for optimal quality/size balance
+- `POST /api/convert` (multipart field: `video`)
+- `POST /api/resize-image` (multipart field: `image`)
+- `POST /api/compress-media` (multipart field: `media`, body: `targetSizeMB`)
 
-## File Structure
+## Project Structure
 
-```
-sandbox/
-├── server.js          # Node.js server with FFmpeg conversion
-├── gif.html          # Frontend interface
-├── compress.html     # Image/GIF compression page
-├── compress.js       # Compression page logic
-├── package.json      # Node.js dependencies
-├── uploads/         # Temporary video uploads (auto-created)
-└── outputs/            # Generated GIFs (auto-created)
+```text
+video_to_gif/
+├── server.js
+├── gif.html
+├── script.js
+├── resize.html
+├── resize.js
+├── compress.html
+├── compress.js
+├── style.css
+├── package.json
+├── uploads/
+└── outputs/
 ```
 
 ## Troubleshooting
 
-### "Conversion failed" Error
+### Compression fails
 
-**Check FFmpeg installation:**
-```bash
-ffmpeg -version
-```
+- Ensure file type is supported: JPG/PNG/WEBP/GIF
+- Try a less aggressive target size
+- Restart server to ensure latest code is running
+- Check terminal logs for detailed error message
 
-If this doesn't work, FFmpeg is not installed or not in your PATH.
+### Video conversion fails
 
-**Solutions:**
-- Reinstall FFmpeg following the installation instructions above
-- Make sure FFmpeg is in your system PATH
-- Restart your terminal/server after installing FFmpeg
+- Confirm FFmpeg is installed and available in PATH
+- Test with a shorter/smaller video file
 
-### "Port 8000 already in use" Error
+### Port 8000 already in use
 
-Another process is using port 8000. Either:
-- Stop the other process
-- Or change the port in `server.js` (line 19):
-  ```javascript
-  app.listen(8000, () => {
-    // Change 8000 to another port like 3000
-  })
-  ```
+- Stop the process using port 8000, or
+- change `app.listen(8000, ...)` in `server.js`
 
-### "No video file provided" Error
+## Tech Stack
 
-- Make sure you selected a video file before clicking convert
-- Check that the file is a valid video format (MP4, MOV, WEBM, AVI)
-
-### Large File Sizes
-
-GIFs are inherently large. To reduce size:
-- Lower the FPS (try 10-15 FPS)
-- Reduce the width (try 480px or 320px)
-- Consider converting shorter video clips
-
-### Slow Conversion
-
-Conversion speed depends on:
-- Video length
-- Video resolution
-- Your computer's processing power
-- 2-5 minutes is normal for a 30-second video
-
-## Technical Details
-
-- **Server**: Express.js
-- **Video Processing**: FFmpeg via fluent-ffmpeg
-- **File Upload**: Multer
-- **Frontend**: Vanilla JavaScript with modern CSS
+- Node.js + Express
+- Multer (uploads)
+- FFmpeg via `fluent-ffmpeg`
+- Sharp (image processing)
+- Vanilla JS + CSS frontend
 
 ## License
 
 MIT
-
-## Support
-
-If you encounter issues:
-1. Check that Node.js and FFmpeg are properly installed
-2. Check the server console for error messages
-3. Verify the video file is not corrupted
-4. Try with a smaller/shorter video file first
