@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="style.css">
+  <script src="compress.js" defer></script>
+  <title>Image & GIF Compressor</title>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🗜️ Image & GIF Compressor</h1>
+      <p>Reduce file size by setting your target in MB</p>
+    </div>
+
+    <nav class="page-nav" aria-label="Page navigation">
+      <a class="page-link" href="gif.html">Video to GIF</a>
+      <a class="page-link" href="resize.html">Image Resizer</a>
+      <a class="page-link active" href="compress.html">Image/GIF Compressor</a>
+    </nav>
+
+    <div class="warning" id="warning"></div>
+
+    <div class="upload-area" id="uploadArea">
+      <input type="file" id="fileInput" class="file-input" accept=".jpg,.jpeg,.png,.webp,.gif" aria-label="Upload image or GIF">
+      <div class="upload-icon">🗜️</div>
+      <div>
+        <strong>Click to upload or drag and drop</strong>
+        <div class="file-name" id="fileName">Choose an image or GIF</div>
+        <div class="file-info" id="fileInfo">JPG, PNG, WEBP, GIF supported</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label for="targetSizeInput" class="control-label">Target size (MB)</label>
+        <input type="number" id="targetSizeInput" class="input-number" min="0.1" step="0.1" value="10"
+          aria-label="Target size in megabytes">
+        <div class="file-info">Example: 50 → 10 MB</div>
+      </div>
+    </div>
+
+    <button id="compressBtn" class="btn btn-primary" disabled>
+      <span id="btnText">Select a file to compress</span>
+    </button>
+
+    <div class="progress-container" id="progressContainer">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="status-text" id="statusText">Preparing...</div>
+    </div>
+
+    <div class="result-container" id="resultContainer">
+      <img id="resultImage" class="result-image" alt="Compressed preview">
+      <div class="result-stats" id="resultStats"></div>
+      <div style="text-align: center;">
+        <a id="downloadBtn" href="#" class="btn-download">
+          ⬇️ Download Compressed File
+        </a>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

@@ -365,6 +365,17 @@ body {
   margin-bottom: 1.5rem;
 }
 
+.result-stats {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border-radius: 10px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  color: #374151;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
 .btn-download {
   background: #10b981;
   color: white;
