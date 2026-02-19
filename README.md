@@ -5,6 +5,7 @@ A simple, local video-to-GIF converter that runs on your server using Node.js an
 ## Features
 
 - 🎬 Convert videos to high-quality GIFs
+- 🗜️ Compress images and GIFs to a target file size (MB)
 - ⚡ Server-side processing (no browser limitations)
 - 🎨 Modern, clean UI
 - 📱 Responsive design
@@ -130,6 +131,18 @@ ffmpeg -version
 5. **Download your GIF:**
    - Once complete, click "Download GIF"
 
+### Compressing an Image or GIF to Target Size
+
+1. Open `http://localhost:8000/compress.html`
+2. Upload an image or GIF
+3. Enter your target size in MB (for example, 10)
+4. Click **Compress File**
+5. Download the compressed file once done
+
+Notes:
+- If exact target size is not possible, the app returns the closest smaller/lower-size result it can generate.
+- GIF compression uses iterative quality/scale reduction for best size reduction.
+
 ## How It Works
 
 The conversion uses a two-pass encoding process for high quality:
@@ -146,6 +159,8 @@ The conversion uses a two-pass encoding process for high quality:
 sandbox/
 ├── server.js          # Node.js server with FFmpeg conversion
 ├── gif.html          # Frontend interface
+├── compress.html     # Image/GIF compression page
+├── compress.js       # Compression page logic
 ├── package.json      # Node.js dependencies
 ├── uploads/         # Temporary video uploads (auto-created)
 └── outputs/            # Generated GIFs (auto-created)
