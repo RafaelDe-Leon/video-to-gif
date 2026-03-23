@@ -159,11 +159,12 @@ const compressImageToTarget = async (inputPath, targetBytes) => {
 
 // Middleware
 app.use(express.json())
-app.use(express.static(__dirname))
+app.use(express.static(path.join(__dirname, 'public')))
+app.use(express.static(path.join(__dirname, 'pages')))
 
-// Serve gif.html at root
+// Root redirects to GIF page
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'gif.html'))
+  res.redirect('/gif/')
 })
 
 // Convert video to GIF endpoint
@@ -408,6 +409,81 @@ app.post('/api/compress-media', upload.single('media'), async (req, res) => {
     return res.status(500).json({
       error: `Compression failed. Try a different target size or file format.${details}`,
     })
+  }
+})
+
+// Video format conversion endpoint
+const FORMAT_OPTIONS = {
+  mp4:  { ext: 'mp4',  mime: 'video/mp4',        args: ['-c:v libx264', '-c:a aac', '-movflags +faststart', '-preset fast'] },
+  mov:  { ext: 'mov',  mime: 'video/quicktime',   args: ['-c:v libx264', '-c:a aac', '-preset fast'] },
+  avi:  { ext: 'avi',  mime: 'video/x-msvideo',   args: ['-c:v libx264', '-c:a mp3'] },
+  mkv:  { ext: 'mkv',  mime: 'video/x-matroska',  args: ['-c:v libx264', '-c:a aac', '-preset fast'] },
+  webm: { ext: 'webm', mime: 'video/webm',         args: ['-c:v libvpx-vp9', '-c:a libopus', '-b:v 0', '-crf 30'] },
+  flv:  { ext: 'flv',  mime: 'video/x-flv',        args: ['-c:v libx264', '-c:a aac', '-ar 44100'] },
+  wmv:  { ext: 'wmv',  mime: 'video/x-ms-wmv',     args: ['-c:v wmv2', '-c:a wmav2'] },
+  m4v:  { ext: 'm4v',  mime: 'video/x-m4v',        args: ['-c:v libx264', '-c:a aac', '-movflags +faststart'] },
+  ts:   { ext: 'ts',   mime: 'video/mp2t',          args: ['-c:v libx264', '-c:a aac'] },
+  '3gp':{ ext: '3gp',  mime: 'video/3gpp',          args: ['-c:v libx264', '-c:a aac', '-strict experimental'] },
+  mp3:  { ext: 'mp3',  mime: 'audio/mpeg',          args: ['-vn', '-c:a libmp3lame', '-q:a 2'] },
+  aac:  { ext: 'aac',  mime: 'audio/aac',            args: ['-vn', '-c:a aac', '-b:a 192k'] },
+  wav:  { ext: 'wav',  mime: 'audio/wav',            args: ['-vn', '-c:a pcm_s16le'] },
+  ogg:  { ext: 'ogg',  mime: 'audio/ogg',            args: ['-vn', '-c:a libvorbis', '-q:a 4'] },
+}
+
+app.post('/api/convert-video', upload.single('video'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No video file provided' })
+  }
+
+  const { format } = req.body
+  if (!format || !FORMAT_OPTIONS[format]) {
+    await unlinkSafe(req.file.path)
+    return res.status(400).json({ error: 'Invalid or unsupported output format' })
+  }
+
+  const inputPath = path.resolve(req.file.path)
+  const { ext, mime, args } = FORMAT_OPTIONS[format]
+  const timestamp = Date.now()
+  const outputPath = path.join(outputsDir, `${timestamp}.${ext}`)
+  const originalBaseName = path.parse(req.file.originalname).name
+
+  try {
+    await new Promise((resolve, reject) => {
+      const cmd = ffmpeg(inputPath)
+
+      // Split space-separated arg strings into individual flags
+      const flatArgs = args.flatMap(a => a.split(' '))
+      cmd.outputOptions([...flatArgs, '-y']).output(outputPath)
+
+      cmd
+        .on('start', line => console.log('Convert command:', line))
+        .on('end', () => resolve())
+        .on('error', (err, _stdout, stderr) => {
+          console.error('Convert error:', err.message)
+          console.error('FFmpeg stderr:', stderr)
+          reject(err)
+        })
+        .run()
+    })
+
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('Output file was not created')
+    }
+
+    res.setHeader('Content-Type', mime)
+    res.setHeader('Content-Disposition', `attachment; filename="${originalBaseName}.${ext}"`)
+    res.sendFile(outputPath, err => {
+      if (err) console.error('Error sending converted file:', err)
+      setTimeout(() => {
+        unlinkSafe(inputPath)
+        unlinkSafe(outputPath)
+      }, 60000)
+    })
+  } catch (error) {
+    await unlinkSafe(inputPath)
+    await unlinkSafe(outputPath)
+    console.error('Video conversion error:', error)
+    res.status(500).json({ error: error.message || 'Conversion failed' })
   }
 })
 
