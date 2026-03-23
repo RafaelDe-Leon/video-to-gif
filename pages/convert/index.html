@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/style.css">
+  <script src="./script.js" defer></script>
+
+  <title>Video Format Converter</title>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎥 Video Converter</h1>
+      <p>Convert any video to your desired format — locally on your server</p>
+    </div>
+
+    <nav class="page-nav" aria-label="Page navigation">
+      <a class="page-link" href="/gif/">Video to GIF</a>
+      <a class="page-link active" href="/convert/">Video Converter</a>
+      <a class="page-link" href="/resize/">Image Resizer</a>
+      <a class="page-link" href="/compress/">Image/GIF Compressor</a>
+    </nav>
+
+    <div class="warning" id="warning"></div>
+
+    <div class="upload-area" id="uploadArea">
+      <input type="file" id="fileInput" class="file-input" accept="video/*,audio/*" aria-label="Upload video file">
+      <div class="upload-icon">📁</div>
+      <div>
+        <strong>Click to upload or drag and drop</strong>
+        <div class="file-name" id="fileName">Choose a video file</div>
+        <div class="file-info" id="fileInfo">MP4, MOV, AVI, MKV, WEBM, FLV, WMV and more</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group" style="grid-column: 1 / -1;">
+        <label class="control-label">Output Format</label>
+        <div class="format-grid" id="formatGrid">
+
+          <div class="format-category">
+            <div class="format-category-label">Video</div>
+            <div class="format-buttons">
+              <button class="format-btn active" data-format="mp4" data-category="video">
+                <span class="format-ext">MP4</span>
+                <span class="format-desc">Most compatible</span>
+              </button>
+              <button class="format-btn" data-format="mov" data-category="video">
+                <span class="format-ext">MOV</span>
+                <span class="format-desc">Apple / QuickTime</span>
+              </button>
+              <button class="format-btn" data-format="avi" data-category="video">
+                <span class="format-ext">AVI</span>
+                <span class="format-desc">Windows classic</span>
+              </button>
+              <button class="format-btn" data-format="mkv" data-category="video">
+                <span class="format-ext">MKV</span>
+                <span class="format-desc">High quality</span>
+              </button>
+              <button class="format-btn" data-format="webm" data-category="video">
+                <span class="format-ext">WEBM</span>
+                <span class="format-desc">Web optimized</span>
+              </button>
+              <button class="format-btn" data-format="flv" data-category="video">
+                <span class="format-ext">FLV</span>
+                <span class="format-desc">Flash video</span>
+              </button>
+              <button class="format-btn" data-format="wmv" data-category="video">
+                <span class="format-ext">WMV</span>
+                <span class="format-desc">Windows Media</span>
+              </button>
+              <button class="format-btn" data-format="m4v" data-category="video">
+                <span class="format-ext">M4V</span>
+                <span class="format-desc">iTunes video</span>
+              </button>
+              <button class="format-btn" data-format="ts" data-category="video">
+                <span class="format-ext">TS</span>
+                <span class="format-desc">Transport stream</span>
+              </button>
+              <button class="format-btn" data-format="3gp" data-category="video">
+                <span class="format-ext">3GP</span>
+                <span class="format-desc">Mobile video</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="format-category">
+            <div class="format-category-label">Audio (extract)</div>
+            <div class="format-buttons">
+              <button class="format-btn" data-format="mp3" data-category="audio">
+                <span class="format-ext">MP3</span>
+                <span class="format-desc">Universal audio</span>
+              </button>
+              <button class="format-btn" data-format="aac" data-category="audio">
+                <span class="format-ext">AAC</span>
+                <span class="format-desc">High quality</span>
+              </button>
+              <button class="format-btn" data-format="wav" data-category="audio">
+                <span class="format-ext">WAV</span>
+                <span class="format-desc">Lossless audio</span>
+              </button>
+              <button class="format-btn" data-format="ogg" data-category="audio">
+                <span class="format-ext">OGG</span>
+                <span class="format-desc">Open source</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="selected-format-info" id="selectedFormatInfo">
+      <span class="selected-format-badge" id="selectedFormatBadge">MP4</span>
+      <span id="selectedFormatDescription">H.264 video + AAC audio — best for sharing &amp; streaming</span>
+    </div>
+
+    <button id="convertBtn" class="btn btn-primary" disabled>
+      <span id="btnText">Select a video file to convert</span>
+    </button>
+
+    <div class="progress-container" id="progressContainer">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-meta">
+        <div class="status-text" id="statusText">Converting...</div>
+        <div class="time-remaining" id="timeRemaining"></div>
+      </div>
+    </div>
+
+    <div class="result-container" id="resultContainer">
+      <div class="result-success">
+        <div class="result-success-icon">✅</div>
+        <div class="result-success-text">Conversion complete!</div>
+      </div>
+      <div style="text-align: center; margin-top: 1.5rem;">
+        <a id="downloadBtn" href="#" class="btn-download">
+          ⬇️ Download <span id="downloadLabel">file</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>
