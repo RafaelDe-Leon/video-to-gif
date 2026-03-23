@@ -430,6 +430,54 @@ const FORMAT_OPTIONS = {
   ogg:  { ext: 'ogg',  mime: 'audio/ogg',            args: ['-vn', '-c:a libvorbis', '-q:a 4'] },
 }
 
+// In-memory job store for tracking conversion progress
+const jobs = new Map()
+
+function broadcastToJob(job, data) {
+  const msg = `data: ${JSON.stringify(data)}\n\n`
+  for (const client of job.clients) {
+    try { client.write(msg) } catch {}
+  }
+}
+
+// SSE endpoint — streams FFmpeg progress to the client
+app.get('/api/convert-video/progress/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId)
+  if (!job) return res.status(404).json({ error: 'Job not found' })
+
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  // Send current state immediately so reconnects get the latest snapshot
+  res.write(`data: ${JSON.stringify({ percent: job.percent, status: job.status, error: job.error })}\n\n`)
+
+  if (job.status === 'done' || job.status === 'error') return res.end()
+
+  job.clients.push(res)
+  req.on('close', () => { job.clients = job.clients.filter(c => c !== res) })
+})
+
+// Download endpoint — serves the finished file by jobId
+app.get('/api/convert-video/download/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId)
+  if (!job || job.status !== 'done' || !job.outputPath) {
+    return res.status(404).json({ error: 'File not ready' })
+  }
+  res.setHeader('Content-Type', job.mime)
+  res.setHeader('Content-Disposition', `attachment; filename="${job.originalBaseName}.${job.ext}"`)
+  res.sendFile(job.outputPath, err => {
+    if (err) console.error('Error sending converted file:', err)
+    setTimeout(() => {
+      unlinkSafe(job.inputPath)
+      unlinkSafe(job.outputPath)
+      jobs.delete(req.params.jobId)
+    }, 30000)
+  })
+})
+
+// Start conversion — returns jobId immediately, runs FFmpeg in background
 app.post('/api/convert-video', upload.single('video'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file provided' })
@@ -444,46 +492,59 @@ app.post('/api/convert-video', upload.single('video'), async (req, res) => {
   const inputPath = path.resolve(req.file.path)
   const { ext, mime, args } = FORMAT_OPTIONS[format]
   const timestamp = Date.now()
+  const jobId = `${timestamp}-${Math.random().toString(36).slice(2, 8)}`
   const outputPath = path.join(outputsDir, `${timestamp}.${ext}`)
   const originalBaseName = path.parse(req.file.originalname).name
 
+  const job = {
+    status: 'processing', percent: 0,
+    startTime: Date.now(),
+    inputPath, outputPath, ext, mime, originalBaseName,
+    error: null, clients: [],
+  }
+  jobs.set(jobId, job)
+
+  // Respond with jobId right away so the client can open the SSE stream
+  res.json({ jobId })
+
+  // FFmpeg runs in the background
   try {
     await new Promise((resolve, reject) => {
-      const cmd = ffmpeg(inputPath)
-
-      // Split space-separated arg strings into individual flags
       const flatArgs = args.flatMap(a => a.split(' '))
-      cmd.outputOptions([...flatArgs, '-y']).output(outputPath)
-
-      cmd
+      ffmpeg(inputPath)
+        .outputOptions([...flatArgs, '-y'])
+        .output(outputPath)
         .on('start', line => console.log('Convert command:', line))
-        .on('end', () => resolve())
+        .on('progress', progress => {
+          const pct = Math.min(99, Math.round(progress.percent || 0))
+          job.percent = pct
+          broadcastToJob(job, { status: 'processing', percent: pct, timemark: progress.timemark })
+        })
+        .on('end', resolve)
         .on('error', (err, _stdout, stderr) => {
-          console.error('Convert error:', err.message)
-          console.error('FFmpeg stderr:', stderr)
+          console.error('Convert error:', err.message, stderr)
           reject(err)
         })
         .run()
     })
 
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('Output file was not created')
-    }
+    if (!fs.existsSync(outputPath)) throw new Error('Output file was not created')
 
-    res.setHeader('Content-Type', mime)
-    res.setHeader('Content-Disposition', `attachment; filename="${originalBaseName}.${ext}"`)
-    res.sendFile(outputPath, err => {
-      if (err) console.error('Error sending converted file:', err)
-      setTimeout(() => {
-        unlinkSafe(inputPath)
-        unlinkSafe(outputPath)
-      }, 60000)
-    })
+    job.status = 'done'
+    job.percent = 100
+    broadcastToJob(job, { status: 'done', percent: 100 })
+    for (const c of job.clients) { try { c.end() } catch {} }
+    job.clients = []
   } catch (error) {
+    console.error('Video conversion error:', error)
+    job.status = 'error'
+    job.error = error.message || 'Conversion failed'
+    broadcastToJob(job, { status: 'error', error: job.error })
+    for (const c of job.clients) { try { c.end() } catch {} }
+    job.clients = []
     await unlinkSafe(inputPath)
     await unlinkSafe(outputPath)
-    console.error('Video conversion error:', error)
-    res.status(500).json({ error: error.message || 'Conversion failed' })
+    setTimeout(() => jobs.delete(jobId), 60000)
   }
 })
 

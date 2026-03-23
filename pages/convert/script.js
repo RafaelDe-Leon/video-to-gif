@@ -17,23 +17,23 @@ const FORMAT_DESCRIPTIONS = {
 
 let selectedFile = null
 let selectedFormat = 'mp4'
-let objectUrl = null
 
 document.addEventListener('DOMContentLoaded', () => {
-  const uploadArea    = document.getElementById('uploadArea')
-  const fileInput     = document.getElementById('fileInput')
-  const fileName      = document.getElementById('fileName')
-  const fileInfo      = document.getElementById('fileInfo')
-  const convertBtn    = document.getElementById('convertBtn')
-  const btnText       = document.getElementById('btnText')
-  const progressContainer = document.getElementById('progressContainer')
-  const progressFill  = document.getElementById('progressFill')
-  const statusText    = document.getElementById('statusText')
-  const resultContainer = document.getElementById('resultContainer')
-  const downloadBtn   = document.getElementById('downloadBtn')
-  const downloadLabel = document.getElementById('downloadLabel')
-  const warning       = document.getElementById('warning')
-  const formatBtns    = document.querySelectorAll('.format-btn')
+  const uploadArea          = document.getElementById('uploadArea')
+  const fileInput           = document.getElementById('fileInput')
+  const fileName            = document.getElementById('fileName')
+  const fileInfo            = document.getElementById('fileInfo')
+  const convertBtn          = document.getElementById('convertBtn')
+  const btnText             = document.getElementById('btnText')
+  const progressContainer   = document.getElementById('progressContainer')
+  const progressFill        = document.getElementById('progressFill')
+  const statusText          = document.getElementById('statusText')
+  const timeRemaining       = document.getElementById('timeRemaining')
+  const resultContainer     = document.getElementById('resultContainer')
+  const downloadBtn         = document.getElementById('downloadBtn')
+  const downloadLabel       = document.getElementById('downloadLabel')
+  const warning             = document.getElementById('warning')
+  const formatBtns          = document.querySelectorAll('.format-btn')
   const selectedFormatBadge = document.getElementById('selectedFormatBadge')
   const selectedFormatDescription = document.getElementById('selectedFormatDescription')
 
@@ -72,10 +72,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleFile(file) {
     selectedFile = file
     uploadArea.classList.add('has-file')
-
     fileName.textContent = file.name
     fileInfo.textContent = `${formatBytes(file.size)} · ${file.type || 'video/unknown'}`
-
     hideWarning()
     hideResult()
     updateConvertButton()
@@ -99,46 +97,73 @@ document.addEventListener('DOMContentLoaded', () => {
     hideResult()
     showProgress()
     convertBtn.disabled = true
-    btnText.innerHTML = '<span class="spinner"></span> Converting…'
-
-    // Animate progress bar (indeterminate style)
-    let pct = 0
-    const ticker = setInterval(() => {
-      pct = pct < 85 ? pct + (85 - pct) * 0.04 : pct
-      progressFill.style.width = pct + '%'
-    }, 300)
+    btnText.innerHTML = '<span class="spinner"></span> Uploading…'
+    statusText.textContent = 'Uploading file…'
+    timeRemaining.textContent = ''
+    progressFill.style.width = '0%'
 
     const formData = new FormData()
     formData.append('video', selectedFile)
     formData.append('format', selectedFormat)
 
+    let conversionStartTime = null
+
     try {
-      statusText.textContent = 'Uploading and converting…'
-      const response = await fetch('/api/convert-video', { method: 'POST', body: formData })
-
-      clearInterval(ticker)
-      progressFill.style.width = '100%'
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: 'Conversion failed' }))
-        throw new Error(err.error || 'Conversion failed')
+      // POST starts the job and returns a jobId immediately
+      const res = await fetch('/api/convert-video', { method: 'POST', body: formData })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to start conversion' }))
+        throw new Error(err.error)
       }
 
-      const blob = await response.blob()
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-      objectUrl = URL.createObjectURL(blob)
+      const { jobId } = await res.json()
+      btnText.innerHTML = '<span class="spinner"></span> Converting…'
+
+      // Open SSE stream to receive real FFmpeg progress
+      await new Promise((resolve, reject) => {
+        const source = new EventSource(`/api/convert-video/progress/${jobId}`)
+
+        source.onmessage = e => {
+          const data = JSON.parse(e.data)
+
+          if (data.status === 'processing') {
+            if (!conversionStartTime && data.percent > 0) {
+              conversionStartTime = Date.now()
+            }
+            progressFill.style.width = data.percent + '%'
+            statusText.textContent = `Converting… ${data.percent}%`
+            timeRemaining.textContent = formatTimeRemaining(conversionStartTime, data.percent)
+          }
+
+          if (data.status === 'done') {
+            source.close()
+            progressFill.style.width = '100%'
+            statusText.textContent = 'Finalizing…'
+            timeRemaining.textContent = ''
+            resolve()
+          }
+
+          if (data.status === 'error') {
+            source.close()
+            reject(new Error(data.error || 'Conversion failed'))
+          }
+        }
+
+        source.onerror = () => {
+          source.close()
+          reject(new Error('Lost connection to server during conversion'))
+        }
+      })
 
       const originalBase = selectedFile.name.replace(/\.[^.]+$/, '')
       const outName = `${originalBase}.${selectedFormat}`
-
-      downloadBtn.href = objectUrl
+      downloadBtn.href = `/api/convert-video/download/${jobId}`
       downloadBtn.download = outName
       downloadLabel.textContent = outName
 
       hideProgress()
       showResult()
     } catch (err) {
-      clearInterval(ticker)
       hideProgress()
       showWarning(err.message || 'An unexpected error occurred.')
     } finally {
@@ -178,5 +203,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+  }
+
+  function formatTimeRemaining(startTime, percent) {
+    if (!startTime || percent <= 0) return ''
+    const elapsed = Date.now() - startTime
+    const estimated = elapsed / (percent / 100)
+    const remaining = Math.round((estimated - elapsed) / 1000)
+    if (remaining <= 0) return ''
+    if (remaining < 60) return `~${remaining}s remaining`
+    const m = Math.floor(remaining / 60)
+    const s = remaining % 60
+    return `~${m}m ${s}s remaining`
   }
 })
