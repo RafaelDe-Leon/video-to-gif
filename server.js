@@ -548,6 +548,117 @@ app.post('/api/convert-video', upload.single('video'), async (req, res) => {
   }
 })
 
+// Photo Collage endpoint
+app.post('/api/collage', upload.array('images', 20), async (req, res) => {
+  const files = req.files || []
+  const inputPaths = files.map(f => f.path)
+
+  if (files.length < 2) {
+    for (const p of inputPaths) await unlinkSafe(p)
+    return res.status(400).json({ error: 'Please upload at least 2 images.' })
+  }
+
+  const layout = ['grid', 'horizontal', 'vertical'].includes(req.body.layout) ? req.body.layout : 'grid'
+  const cellSize = Math.max(100, Math.min(1200, parseInt(req.body.cellSize) || 400))
+  const gap = Math.max(0, Math.min(100, parseInt(req.body.gap) || 10))
+  const bgHex = (req.body.background || '#ffffff').replace('#', '')
+  const format = ['jpg', 'png', 'webp'].includes(req.body.format) ? req.body.format : 'jpg'
+
+  const bgR = parseInt(bgHex.slice(0, 2), 16) || 255
+  const bgG = parseInt(bgHex.slice(2, 4), 16) || 255
+  const bgB = parseInt(bgHex.slice(4, 6), 16) || 255
+
+  try {
+    // Resize all images and collect their actual pixel dimensions
+    const resized = []
+    for (const inputPath of inputPaths) {
+      let pipeline = sharp(inputPath).rotate()
+
+      if (layout === 'horizontal') {
+        // Fixed height, proportional width
+        pipeline = pipeline.resize(null, cellSize, { fit: 'inside', withoutEnlargement: false })
+      } else if (layout === 'vertical') {
+        // Fixed width, proportional height
+        pipeline = pipeline.resize(cellSize, null, { fit: 'inside', withoutEnlargement: false })
+      } else {
+        // Grid: square crop to fill the cell
+        pipeline = pipeline.resize(cellSize, cellSize, { fit: 'cover' })
+      }
+
+      const { data, info } = await pipeline.toBuffer({ resolveWithObject: true })
+      resized.push({ data, width: info.width, height: info.height })
+    }
+
+    // Calculate canvas dimensions and positions
+    let canvasWidth, canvasHeight
+    const positions = []
+
+    if (layout === 'horizontal') {
+      canvasHeight = cellSize
+      canvasWidth = resized.reduce((sum, img, i) => sum + img.width + (i > 0 ? gap : 0), 0)
+      let x = 0
+      for (const img of resized) {
+        positions.push({ x, y: Math.round((canvasHeight - img.height) / 2) })
+        x += img.width + gap
+      }
+    } else if (layout === 'vertical') {
+      canvasWidth = cellSize
+      canvasHeight = resized.reduce((sum, img, i) => sum + img.height + (i > 0 ? gap : 0), 0)
+      let y = 0
+      for (const img of resized) {
+        positions.push({ x: Math.round((canvasWidth - img.width) / 2), y })
+        y += img.height + gap
+      }
+    } else {
+      // Grid: auto-calculate columns and rows
+      const cols = Math.ceil(Math.sqrt(resized.length))
+      canvasWidth = cols * cellSize + (cols - 1) * gap
+      const rows = Math.ceil(resized.length / cols)
+      canvasHeight = rows * cellSize + (rows - 1) * gap
+      resized.forEach((_, i) => {
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        positions.push({ x: col * (cellSize + gap), y: row * (cellSize + gap) })
+      })
+    }
+
+    const compositeItems = resized.map((img, i) => ({
+      input: img.data,
+      left: positions[i].x,
+      top: positions[i].y,
+    }))
+
+    let pipeline = sharp({
+      create: {
+        width: canvasWidth,
+        height: canvasHeight,
+        channels: 3,
+        background: { r: bgR, g: bgG, b: bgB },
+      },
+    }).composite(compositeItems)
+
+    let buffer
+    if (format === 'png') {
+      buffer = await pipeline.png().toBuffer()
+    } else if (format === 'webp') {
+      buffer = await pipeline.webp({ quality: 90 }).toBuffer()
+    } else {
+      buffer = await pipeline.jpeg({ quality: 90, mozjpeg: true }).toBuffer()
+    }
+
+    const mimeMap = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }
+    const ext = format === 'jpg' ? 'jpg' : format
+    res.setHeader('Content-Type', mimeMap[format])
+    res.setHeader('Content-Disposition', `attachment; filename="collage.${ext}"`)
+    return res.send(buffer)
+  } catch (error) {
+    console.error('Collage error:', error)
+    return res.status(500).json({ error: error.message || 'Failed to create collage' })
+  } finally {
+    for (const p of inputPaths) await unlinkSafe(p)
+  }
+})
+
 app.listen(8000, () => {
   console.log('Server running at http://localhost:8000')
   console.log('Open http://localhost:8000 in your browser to use the GIF converter')
