@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="/style.css">
+  <script src="./script.js" defer></script>
+  <title>Photo Frame</title>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🖼️ Photo Frame</h1>
+      <p>Upload a photo and add a beautiful frame</p>
+    </div>
+
+    <nav class="page-nav" aria-label="Page navigation">
+      <a class="page-link" href="/gif/">Video to GIF</a>
+      <a class="page-link" href="/convert/">Video Converter</a>
+      <a class="page-link" href="/resize/">Image Resizer</a>
+      <a class="page-link" href="/compress/">Image/GIF Compressor</a>
+      <a class="page-link" href="/collage/">Photo Collage</a>
+      <a class="page-link active" href="/frame/">Photo Frame</a>
+    </nav>
+
+    <div class="warning" id="warning"></div>
+
+    <div class="upload-area" id="uploadArea">
+      <input type="file" id="fileInput" class="file-input" accept=".jpg,.jpeg,.png,.webp">
+      <div class="upload-icon">🖼️</div>
+      <div>
+        <strong>Click to upload a photo</strong>
+        <div class="file-name" id="fileName">Choose an image (JPG, PNG, WEBP)</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Frame Style</label>
+        <div class="format-grid">
+          <div class="format-buttons" id="frameButtons">
+            <button class="format-btn active" data-frame="classic">
+              <span class="format-ext">Classic</span>
+              <span class="format-desc">Gold border</span>
+            </button>
+            <button class="format-btn" data-frame="polaroid">
+              <span class="format-ext">Polaroid</span>
+              <span class="format-desc">White border</span>
+            </button>
+            <button class="format-btn" data-frame="shadow">
+              <span class="format-ext">Shadow</span>
+              <span class="format-desc">Drop shadow</span>
+            </button>
+            <button class="format-btn" data-frame="vintage">
+              <span class="format-ext">Vintage</span>
+              <span class="format-desc">Double border</span>
+            </button>
+            <button class="format-btn" data-frame="modern">
+              <span class="format-ext">Modern</span>
+              <span class="format-desc">Thin dark</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="control-label">Border Size</label>
+        <input type="range" id="borderSize" class="slider" min="20" max="150" value="60">
+        <div class="control-value" id="borderSizeValue">60px</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label class="control-label">Output Format</label>
+        <select id="outputFormat" class="select">
+          <option value="jpg">JPG</option>
+          <option value="png">PNG</option>
+          <option value="webp">WEBP</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="frameBtn" class="btn btn-primary" disabled>Add Frame & Download</button>
+
+    <div class="progress-container" id="progressContainer">
+      <div class="status-text" id="statusText">Processing...</div>
+    </div>
+
+    <div class="result-container" id="resultContainer">
+      <img id="previewImage" class="result-image" alt="Framed photo preview">
+    </div>
+  </div>
+</body>
+
+</html>

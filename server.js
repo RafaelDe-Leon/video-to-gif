@@ -659,6 +659,161 @@ app.post('/api/collage', upload.array('images', 20), async (req, res) => {
   }
 })
 
+// Photo Frame endpoint
+app.post('/api/frame', upload.single('image'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No image file provided' })
+  }
+
+  const inputPath = req.file.path
+  const style = req.body.style || 'classic'
+  const border = Math.max(10, Math.min(200, parseInt(req.body.borderSize) || 60))
+  const format = ['jpg', 'png', 'webp'].includes(req.body.format) ? req.body.format : 'jpg'
+
+  try {
+    const metadata = await sharp(inputPath).metadata()
+    const imgWidth = metadata.width
+    const imgHeight = metadata.height
+
+    let buffer
+
+    if (style === 'classic') {
+      // Gold frame with inner dark accent line
+      const accent = Math.max(2, Math.round(border * 0.06))
+      const outerW = imgWidth + border * 2
+      const outerH = imgHeight + border * 2
+      const canvas = sharp({
+        create: { width: outerW, height: outerH, channels: 3, background: { r: 191, g: 155, b: 81 } },
+      })
+
+      // Inner accent rectangle
+      const accentRect = Buffer.from(
+        `<svg width="${outerW}" height="${outerH}">
+          <rect x="${border - accent * 3}" y="${border - accent * 3}"
+                width="${imgWidth + accent * 6}" height="${imgHeight + accent * 6}"
+                fill="none" stroke="#5c4a1e" stroke-width="${accent}"/>
+          <rect x="${border - accent}" y="${border - accent}"
+                width="${imgWidth + accent * 2}" height="${imgHeight + accent * 2}"
+                fill="none" stroke="#d4a843" stroke-width="${accent}"/>
+        </svg>`
+      )
+
+      const imageBuffer = await sharp(inputPath).rotate().toBuffer()
+      buffer = await canvas
+        .composite([
+          { input: accentRect, left: 0, top: 0 },
+          { input: imageBuffer, left: border, top: border },
+        ])
+        .png()
+        .toBuffer()
+    } else if (style === 'polaroid') {
+      // White border, thicker on bottom (like a polaroid)
+      const bottomBorder = Math.round(border * 2.5)
+      const outerW = imgWidth + border * 2
+      const outerH = imgHeight + border + bottomBorder
+
+      const imageBuffer = await sharp(inputPath).rotate().toBuffer()
+      buffer = await sharp({
+        create: { width: outerW, height: outerH, channels: 3, background: { r: 255, g: 255, b: 255 } },
+      })
+        .composite([{ input: imageBuffer, left: border, top: border }])
+        .png()
+        .toBuffer()
+    } else if (style === 'shadow') {
+      // Image on white background with a dark shadow effect
+      const shadowOffset = Math.round(border * 0.25)
+      const padding = border
+      const outerW = imgWidth + padding * 2 + shadowOffset
+      const outerH = imgHeight + padding * 2 + shadowOffset
+
+      const shadowSvg = Buffer.from(
+        `<svg width="${outerW}" height="${outerH}">
+          <rect x="${padding + shadowOffset}" y="${padding + shadowOffset}"
+                width="${imgWidth}" height="${imgHeight}"
+                rx="4" ry="4" fill="rgba(0,0,0,0.35)"/>
+        </svg>`
+      )
+
+      const imageBuffer = await sharp(inputPath).rotate().toBuffer()
+      buffer = await sharp({
+        create: { width: outerW, height: outerH, channels: 3, background: { r: 245, g: 245, b: 245 } },
+      })
+        .composite([
+          { input: shadowSvg, left: 0, top: 0 },
+          { input: imageBuffer, left: padding, top: padding },
+        ])
+        .png()
+        .toBuffer()
+    } else if (style === 'vintage') {
+      // Warm-toned double border: dark outer, cream inner mat
+      const outerBorder = Math.round(border * 0.4)
+      const innerBorder = border - outerBorder
+      const outerW = imgWidth + (outerBorder + innerBorder) * 2
+      const outerH = imgHeight + (outerBorder + innerBorder) * 2
+
+      const innerCanvas = await sharp({
+        create: { width: imgWidth + innerBorder * 2, height: imgHeight + innerBorder * 2, channels: 3, background: { r: 245, g: 235, b: 215 } },
+      })
+        .composite([{ input: await sharp(inputPath).rotate().toBuffer(), left: innerBorder, top: innerBorder }])
+        .png()
+        .toBuffer()
+
+      buffer = await sharp({
+        create: { width: outerW, height: outerH, channels: 3, background: { r: 62, g: 47, b: 34 } },
+      })
+        .composite([{ input: innerCanvas, left: outerBorder, top: outerBorder }])
+        .png()
+        .toBuffer()
+    } else if (style === 'modern') {
+      // Thin dark border with generous white mat
+      const thinBorder = Math.max(2, Math.round(border * 0.08))
+      const matSize = border - thinBorder
+      const outerW = imgWidth + (thinBorder + matSize) * 2
+      const outerH = imgHeight + (thinBorder + matSize) * 2
+
+      const innerCanvas = await sharp({
+        create: { width: imgWidth + matSize * 2, height: imgHeight + matSize * 2, channels: 3, background: { r: 255, g: 255, b: 255 } },
+      })
+        .composite([{ input: await sharp(inputPath).rotate().toBuffer(), left: matSize, top: matSize }])
+        .png()
+        .toBuffer()
+
+      buffer = await sharp({
+        create: { width: outerW, height: outerH, channels: 3, background: { r: 30, g: 30, b: 30 } },
+      })
+        .composite([{ input: innerCanvas, left: thinBorder, top: thinBorder }])
+        .png()
+        .toBuffer()
+    } else {
+      await unlinkSafe(inputPath)
+      return res.status(400).json({ error: 'Unknown frame style' })
+    }
+
+    // Convert to requested output format
+    let pipeline = sharp(buffer)
+    const mimeMap = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }
+    if (format === 'png') {
+      pipeline = pipeline.png()
+    } else if (format === 'webp') {
+      pipeline = pipeline.webp({ quality: 92 })
+    } else {
+      pipeline = pipeline.jpeg({ quality: 92, mozjpeg: true })
+    }
+
+    const outputBuffer = await pipeline.toBuffer()
+    const ext = format === 'jpg' ? 'jpg' : format
+
+    res.setHeader('Content-Type', mimeMap[format])
+    res.setHeader('Content-Disposition', `attachment; filename="framed.${ext}"`)
+    await unlinkSafe(inputPath)
+    return res.send(outputBuffer)
+  } catch (error) {
+    await unlinkSafe(inputPath)
+    console.error('Frame error:', error)
+    return res.status(500).json({ error: error.message || 'Failed to add frame' })
+  }
+})
+
 app.listen(8000, () => {
   console.log('Server running at http://localhost:8000')
   console.log('Open http://localhost:8000 in your browser to use the GIF converter')
