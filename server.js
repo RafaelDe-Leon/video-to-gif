@@ -1,5 +1,6 @@
 const express = require('express')
 const path = require('path')
+const os = require('os')
 const sharp = require('sharp')
 const multer = require('multer')
 const ffmpeg = require('fluent-ffmpeg')
@@ -8,17 +9,8 @@ const { promisify } = require('util')
 
 const app = express()
 
-// Ensure uploads and outputs directories exist
-const uploadsDir = path.join(__dirname, 'uploads')
-const outputsDir = path.join(__dirname, 'outputs')
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true })
-}
-if (!fs.existsSync(outputsDir)) {
-  fs.mkdirSync(outputsDir, { recursive: true })
-}
-
-const upload = multer({ dest: uploadsDir })
+// All uploads held in memory — nothing written to disk by multer
+const upload = multer({ storage: multer.memoryStorage() })
 const unlink = promisify(fs.unlink)
 
 const unlinkSafe = async filePath => {
@@ -30,13 +22,17 @@ const unlinkSafe = async filePath => {
   }
 }
 
+// Write a buffer to a temp file (needed for FFmpeg which requires file paths)
+const writeTmp = (buffer, ext) => {
+  const filePath = path.join(os.tmpdir(), `vtg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`)
+  fs.writeFileSync(filePath, buffer)
+  return filePath
+}
+
 const ffprobeAsync = filePath =>
   new Promise((resolve, reject) => {
     ffmpeg.ffprobe(filePath, (err, data) => {
-      if (err) {
-        reject(err)
-        return
-      }
+      if (err) { reject(err); return }
       resolve(data)
     })
   })
@@ -56,7 +52,7 @@ const runGifCompression = ({ inputPath, outputPath, width, fps }) =>
       .run()
   })
 
-const compressGifToTarget = async (inputPath, targetBytes, baseName) => {
+const compressGifToTarget = async (inputPath, targetBytes) => {
   const probe = await ffprobeAsync(inputPath)
   const videoStream = probe.streams.find(stream => stream.codec_type === 'video')
   const sourceWidth = videoStream?.width || 800
@@ -69,7 +65,7 @@ const compressGifToTarget = async (inputPath, targetBytes, baseName) => {
     const scaledWidth = Math.max(80, Math.round(sourceWidth * scaleFactor))
 
     for (const fps of fpsOptions) {
-      const outputPath = path.join(outputsDir, `${baseName}-${scaledWidth}-${fps}.gif`)
+      const outputPath = path.join(os.tmpdir(), `vtg-gif-${scaledWidth}-${fps}-${Date.now()}.gif`)
       await runGifCompression({ inputPath, outputPath, width: scaledWidth, fps })
 
       const size = fs.statSync(outputPath).size
@@ -90,8 +86,8 @@ const compressGifToTarget = async (inputPath, targetBytes, baseName) => {
   return { outputPath: best.path, size: best.size, achieved: false }
 }
 
-const compressImageToTarget = async (inputPath, targetBytes) => {
-  const metadata = await sharp(inputPath).metadata()
+const compressImageToTarget = async (inputBuffer, targetBytes) => {
+  const metadata = await sharp(inputBuffer).metadata()
   const sourceWidth = metadata.width || 2000
   const sourceHeight = metadata.height || 2000
   const sourceFormat = (metadata.format || '').toLowerCase()
@@ -110,12 +106,9 @@ const compressImageToTarget = async (inputPath, targetBytes) => {
 
     for (let i = 0; i < 7; i++) {
       const quality = Math.round((low + high) / 2)
-      let pipeline = sharp(inputPath)
+      let pipeline = sharp(inputBuffer)
         .rotate()
-        .resize(targetWidth, targetHeight, {
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
+        .resize(targetWidth, targetHeight, { fit: 'inside', withoutEnlargement: true })
 
       if (outputFormat === 'jpeg') {
         pipeline = pipeline.jpeg({ quality, mozjpeg: true })
@@ -129,14 +122,10 @@ const compressImageToTarget = async (inputPath, targetBytes) => {
       const size = buffer.length
       const candidate = { buffer, size, format: outputFormat }
 
-      if (!smallestOverall || size < smallestOverall.size) {
-        smallestOverall = candidate
-      }
+      if (!smallestOverall || size < smallestOverall.size) smallestOverall = candidate
 
       if (size <= targetBytes) {
-        if (!bestUnderTarget || size > bestUnderTarget.size) {
-          bestUnderTarget = candidate
-        }
+        if (!bestUnderTarget || size > bestUnderTarget.size) bestUnderTarget = candidate
         low = quality + 1
       } else {
         high = quality - 1
@@ -148,13 +137,7 @@ const compressImageToTarget = async (inputPath, targetBytes) => {
   const extension = finalResult.format === 'jpeg' ? 'jpg' : finalResult.format
   const mimeType = `image/${finalResult.format === 'jpg' ? 'jpeg' : finalResult.format}`
 
-  return {
-    buffer: finalResult.buffer,
-    size: finalResult.size,
-    extension,
-    mimeType,
-    achieved: Boolean(bestUnderTarget),
-  }
+  return { buffer: finalResult.buffer, size: finalResult.size, extension, mimeType, achieved: Boolean(bestUnderTarget) }
 }
 
 // Middleware
@@ -176,180 +159,100 @@ app.post('/api/convert', upload.single('video'), async (req, res) => {
   const { fps = 15, width = 480, height = 0 } = req.body
   const widthNum = parseInt(width) || 480
   const heightNum = parseInt(height) || 0
-  const inputPath = path.resolve(req.file.path)
   const timestamp = Date.now()
 
-  // Ensure outputs directory exists and is writable
-  if (!fs.existsSync(outputsDir)) {
-    fs.mkdirSync(outputsDir, { recursive: true, mode: 0o755 })
-  }
+  const inputPath = writeTmp(req.file.buffer, path.extname(req.file.originalname) || '.mp4')
+  const outputPath = path.join(os.tmpdir(), `vtg-out-${timestamp}.gif`)
+  const palettePath = path.join(os.tmpdir(), `vtg-palette-${timestamp}.png`)
 
-  // Verify input file exists
-  if (!fs.existsSync(inputPath)) {
-    return res.status(400).json({ error: 'Input file not found' })
-  }
-
-  // Use simple filenames to avoid path issues
-  const outputFilename = `${timestamp}.gif`
-  const paletteFilename = `palette_${timestamp}.png`
-  const outputPath = path.join(outputsDir, outputFilename)
-  const palettePath = path.join(outputsDir, paletteFilename)
-
-  console.log('Input path:', inputPath)
-  console.log('Output path:', outputPath)
-  console.log('Palette path:', palettePath)
-  console.log('Outputs dir exists:', fs.existsSync(outputsDir))
-  console.log('FPS:', fps, 'Width:', widthNum, 'Height:', heightNum || 'auto')
-
-  // Determine size string for FFmpeg
   const sizeString = heightNum > 0 ? `${widthNum}x${heightNum}` : `${widthNum}:-1`
 
   try {
-    // Step 1: Generate palette (high quality)
     await new Promise((resolve, reject) => {
-      const command = ffmpeg(inputPath)
-        .videoFilters([
-          `fps=${fps}`,
-          `scale=${sizeString}:flags=lanczos`,
-          'palettegen=max_colors=256',
-        ])
-        .outputOptions(['-y']) // Overwrite output file
-        .output(palettePath)
-        .on('start', commandLine => {
-          console.log('Palette generation command:', commandLine)
-        })
-        .on('progress', progress => {
-          if (progress.percent) {
-            console.log('Palette progress:', Math.round(progress.percent) + '%')
-          }
-        })
-        .on('end', () => {
-          console.log('Palette generated successfully')
-          if (fs.existsSync(palettePath)) {
-            console.log('Palette file exists, size:', fs.statSync(palettePath).size, 'bytes')
-          }
-          resolve()
-        })
-        .on('error', (err, stdout, stderr) => {
-          console.error('Palette generation error:', err.message)
-          console.error('FFmpeg stderr:', stderr)
-          console.error('FFmpeg stdout:', stdout)
-          reject(err)
-        })
-
-      command.run()
-    })
-
-    // Step 2: Create GIF with palette (high quality)
-    await new Promise((resolve, reject) => {
-      const scaleFilter =
-        heightNum > 0
-          ? `scale=${widthNum}:${heightNum}:flags=lanczos`
-          : `scale=${widthNum}:-1:flags=lanczos`
-
       ffmpeg(inputPath)
-        .input(palettePath)
-        .complexFilter([
-          `[0:v]fps=${fps},${scaleFilter}[x]`,
-          '[x][1:v]paletteuse=dither=bayer:bayer_scale=5',
-        ])
-        .outputOptions([
-          '-loop 0', // Infinite loop
-        ])
-        .output(outputPath)
-        .on('start', commandLine => {
-          console.log('GIF creation command:', commandLine)
-        })
-        .on('progress', progress => {
-          if (progress.percent) {
-            console.log('GIF creation progress:', Math.round(progress.percent) + '%')
-          }
-        })
-        .on('end', () => {
-          console.log('GIF created successfully')
-          resolve()
-        })
-        .on('error', (err, stdout, stderr) => {
-          console.error('GIF creation error:', err.message)
-          console.error('FFmpeg stderr:', stderr)
+        .videoFilters([`fps=${fps}`, `scale=${sizeString}:flags=lanczos`, 'palettegen=max_colors=256'])
+        .outputOptions(['-y'])
+        .output(palettePath)
+        .on('end', resolve)
+        .on('error', (err, _stdout, stderr) => {
+          console.error('Palette error:', err.message, stderr)
           reject(err)
         })
         .run()
     })
 
-    // Verify output file exists
-    if (!fs.existsSync(outputPath)) {
-      throw new Error('Output file was not created')
-    }
+    const scaleFilter = heightNum > 0
+      ? `scale=${widthNum}:${heightNum}:flags=lanczos`
+      : `scale=${widthNum}:-1:flags=lanczos`
 
-    // Send the GIF file
+    await new Promise((resolve, reject) => {
+      ffmpeg(inputPath)
+        .input(palettePath)
+        .complexFilter([`[0:v]fps=${fps},${scaleFilter}[x]`, '[x][1:v]paletteuse=dither=bayer:bayer_scale=5'])
+        .outputOptions(['-loop 0'])
+        .output(outputPath)
+        .on('end', resolve)
+        .on('error', (err, _stdout, stderr) => {
+          console.error('GIF error:', err.message, stderr)
+          reject(err)
+        })
+        .run()
+    })
+
+    if (!fs.existsSync(outputPath)) throw new Error('Output file was not created')
+
     res.setHeader('Content-Type', 'image/gif')
-    res.setHeader('Content-Disposition', `attachment; filename="converted.gif"`)
+    res.setHeader('Content-Disposition', 'attachment; filename="converted.gif"')
     res.sendFile(outputPath, err => {
-      if (err) {
-        console.error('Error sending file:', err)
-      }
-      // Cleanup files after a delay
+      if (err) console.error('Error sending GIF:', err)
       setTimeout(() => {
-        unlink(inputPath).catch(() => {})
-        unlink(palettePath).catch(() => {})
-        unlink(outputPath).catch(() => {})
-      }, 60000) // Delete after 1 minute
+        unlinkSafe(inputPath)
+        unlinkSafe(palettePath)
+        unlinkSafe(outputPath)
+      }, 60000)
     })
   } catch (error) {
     console.error('Conversion error:', error)
-    // Cleanup on error
-    unlink(inputPath).catch(() => {})
-    unlink(palettePath).catch(() => {})
-    if (fs.existsSync(outputPath)) {
-      unlink(outputPath).catch(() => {})
-    }
+    unlinkSafe(inputPath)
+    unlinkSafe(palettePath)
+    unlinkSafe(outputPath)
     res.status(500).json({ error: error.message || 'Conversion failed' })
   }
 })
 
-// New Image Resize Endpoint
+// Image Resize endpoint
 app.post('/api/resize-image', upload.single('image'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No image file provided' })
   }
 
-  const { width, height } = req.body
-  const widthNum = parseInt(width)
-  const heightNum = parseInt(height) || null // sharp uses null for auto-aspect
-  const inputPath = req.file.path
-  const outputPath = path.join(outputsDir, `resized-${Date.now()}-${req.file.originalname}`)
+  const widthNum = parseInt(req.body.width)
+  const heightNum = parseInt(req.body.height) || null
 
   try {
-    await sharp(inputPath)
-      .resize(widthNum, heightNum, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
-      })
-      .toFile(outputPath)
+    const buffer = await sharp(req.file.buffer)
+      .resize(widthNum, heightNum, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .toBuffer()
 
-    res.download(outputPath, `resized-${req.file.originalname}`, err => {
-      // Cleanup
-      fs.unlinkSync(inputPath)
-      setTimeout(() => fs.unlinkSync(outputPath), 5000)
-    })
+    res.setHeader('Content-Type', req.file.mimetype)
+    res.setHeader('Content-Disposition', `attachment; filename="resized-${req.file.originalname}"`)
+    res.send(buffer)
   } catch (error) {
     console.error(error)
     res.status(500).json({ error: 'Image processing failed' })
   }
 })
 
+// Compress media endpoint
 app.post('/api/compress-media', upload.single('media'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file provided' })
   }
 
-  const inputPath = req.file.path
   const originalSize = req.file.size
   const targetSizeMB = parseFloat(req.body.targetSizeMB)
 
   if (!targetSizeMB || targetSizeMB <= 0) {
-    await unlinkSafe(inputPath)
     return res.status(400).json({ error: 'Target size must be greater than 0 MB' })
   }
 
@@ -359,18 +262,21 @@ app.post('/api/compress-media', upload.single('media'), async (req, res) => {
   const supportedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 
   if (!supportedExtensions.includes(extension) && !supportedMimeTypes.includes(req.file.mimetype)) {
-    await unlinkSafe(inputPath)
-    return res.status(400).json({
-      error: 'Unsupported file type. Please upload JPG, PNG, WEBP, or GIF.',
-    })
+    return res.status(400).json({ error: 'Unsupported file type. Please upload JPG, PNG, WEBP, or GIF.' })
   }
 
   const isGif = extension === '.gif' || req.file.mimetype === 'image/gif'
 
   try {
     if (isGif) {
-      const baseName = `compressed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      const result = await compressGifToTarget(inputPath, targetBytes, baseName)
+      // GIF needs FFmpeg — write to tmp, process, delete
+      const inputPath = writeTmp(req.file.buffer, '.gif')
+      let result
+      try {
+        result = await compressGifToTarget(inputPath, targetBytes)
+      } finally {
+        await unlinkSafe(inputPath)
+      }
 
       res.setHeader('Content-Type', 'image/gif')
       res.setHeader('Content-Disposition', `attachment; filename="compressed-${path.parse(req.file.originalname).name}.gif"`)
@@ -380,35 +286,25 @@ app.post('/api/compress-media', upload.single('media'), async (req, res) => {
       res.setHeader('X-Target-Achieved', String(result.achieved))
 
       return res.sendFile(path.resolve(result.outputPath), async err => {
-        await unlinkSafe(inputPath)
         await unlinkSafe(result.outputPath)
-        if (err) {
-          console.error('Error sending compressed GIF:', err)
-        }
+        if (err) console.error('Error sending compressed GIF:', err)
       })
     }
 
-    const imageResult = await compressImageToTarget(inputPath, targetBytes)
+    const imageResult = await compressImageToTarget(req.file.buffer, targetBytes)
 
     res.setHeader('Content-Type', imageResult.mimeType)
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="compressed-${path.parse(req.file.originalname).name}.${imageResult.extension}"`
-    )
+    res.setHeader('Content-Disposition', `attachment; filename="compressed-${path.parse(req.file.originalname).name}.${imageResult.extension}"`)
     res.setHeader('X-Original-Size-Bytes', String(originalSize))
     res.setHeader('X-Compressed-Size-Bytes', String(imageResult.size))
     res.setHeader('X-Target-Bytes', String(targetBytes))
     res.setHeader('X-Target-Achieved', String(imageResult.achieved))
 
-    await unlinkSafe(inputPath)
     return res.status(200).send(imageResult.buffer)
   } catch (error) {
-    await unlinkSafe(inputPath)
     console.error('Compression error:', error)
-    const details = error && error.message ? ` Details: ${error.message}` : ''
-    return res.status(500).json({
-      error: `Compression failed. Try a different target size or file format.${details}`,
-    })
+    const details = error?.message ? ` Details: ${error.message}` : ''
+    return res.status(500).json({ error: `Compression failed. Try a different target size or file format.${details}` })
   }
 })
 
@@ -430,7 +326,6 @@ const FORMAT_OPTIONS = {
   ogg:  { ext: 'ogg',  mime: 'audio/ogg',            args: ['-vn', '-c:a libvorbis', '-q:a 4'] },
 }
 
-// In-memory job store for tracking conversion progress
 const jobs = new Map()
 
 function broadcastToJob(job, data) {
@@ -440,7 +335,6 @@ function broadcastToJob(job, data) {
   }
 }
 
-// SSE endpoint — streams FFmpeg progress to the client
 app.get('/api/convert-video/progress/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId)
   if (!job) return res.status(404).json({ error: 'Job not found' })
@@ -450,7 +344,6 @@ app.get('/api/convert-video/progress/:jobId', (req, res) => {
   res.setHeader('Connection', 'keep-alive')
   res.flushHeaders()
 
-  // Send current state immediately so reconnects get the latest snapshot
   res.write(`data: ${JSON.stringify({ percent: job.percent, status: job.status, error: job.error })}\n\n`)
 
   if (job.status === 'done' || job.status === 'error') return res.end()
@@ -459,7 +352,6 @@ app.get('/api/convert-video/progress/:jobId', (req, res) => {
   req.on('close', () => { job.clients = job.clients.filter(c => c !== res) })
 })
 
-// Download endpoint — serves the finished file by jobId
 app.get('/api/convert-video/download/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId)
   if (!job || job.status !== 'done' || !job.outputPath) {
@@ -477,7 +369,6 @@ app.get('/api/convert-video/download/:jobId', (req, res) => {
   })
 })
 
-// Start conversion — returns jobId immediately, runs FFmpeg in background
 app.post('/api/convert-video', upload.single('video'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file provided' })
@@ -485,15 +376,14 @@ app.post('/api/convert-video', upload.single('video'), async (req, res) => {
 
   const { format } = req.body
   if (!format || !FORMAT_OPTIONS[format]) {
-    await unlinkSafe(req.file.path)
     return res.status(400).json({ error: 'Invalid or unsupported output format' })
   }
 
-  const inputPath = path.resolve(req.file.path)
   const { ext, mime, args } = FORMAT_OPTIONS[format]
   const timestamp = Date.now()
   const jobId = `${timestamp}-${Math.random().toString(36).slice(2, 8)}`
-  const outputPath = path.join(outputsDir, `${timestamp}.${ext}`)
+  const inputPath = writeTmp(req.file.buffer, path.extname(req.file.originalname) || '.mp4')
+  const outputPath = path.join(os.tmpdir(), `vtg-converted-${timestamp}.${ext}`)
   const originalBaseName = path.parse(req.file.originalname).name
 
   const job = {
@@ -504,10 +394,8 @@ app.post('/api/convert-video', upload.single('video'), async (req, res) => {
   }
   jobs.set(jobId, job)
 
-  // Respond with jobId right away so the client can open the SSE stream
   res.json({ jobId })
 
-  // FFmpeg runs in the background
   try {
     await new Promise((resolve, reject) => {
       const flatArgs = args.flatMap(a => a.split(' '))
@@ -551,10 +439,8 @@ app.post('/api/convert-video', upload.single('video'), async (req, res) => {
 // Photo Collage endpoint
 app.post('/api/collage', upload.array('images', 20), async (req, res) => {
   const files = req.files || []
-  const inputPaths = files.map(f => f.path)
 
   if (files.length < 2) {
-    for (const p of inputPaths) await unlinkSafe(p)
     return res.status(400).json({ error: 'Please upload at least 2 images.' })
   }
 
@@ -569,19 +455,15 @@ app.post('/api/collage', upload.array('images', 20), async (req, res) => {
   const bgB = parseInt(bgHex.slice(4, 6), 16) || 255
 
   try {
-    // Resize all images and collect their actual pixel dimensions
     const resized = []
-    for (const inputPath of inputPaths) {
-      let pipeline = sharp(inputPath).rotate()
+    for (const file of files) {
+      let pipeline = sharp(file.buffer).rotate()
 
       if (layout === 'horizontal') {
-        // Fixed height, proportional width
         pipeline = pipeline.resize(null, cellSize, { fit: 'inside', withoutEnlargement: false })
       } else if (layout === 'vertical') {
-        // Fixed width, proportional height
         pipeline = pipeline.resize(cellSize, null, { fit: 'inside', withoutEnlargement: false })
       } else {
-        // Grid: square crop to fill the cell
         pipeline = pipeline.resize(cellSize, cellSize, { fit: 'cover' })
       }
 
@@ -589,7 +471,6 @@ app.post('/api/collage', upload.array('images', 20), async (req, res) => {
       resized.push({ data, width: info.width, height: info.height })
     }
 
-    // Calculate canvas dimensions and positions
     let canvasWidth, canvasHeight
     const positions = []
 
@@ -610,7 +491,6 @@ app.post('/api/collage', upload.array('images', 20), async (req, res) => {
         y += img.height + gap
       }
     } else {
-      // Grid: auto-calculate columns and rows
       const cols = Math.ceil(Math.sqrt(resized.length))
       canvasWidth = cols * cellSize + (cols - 1) * gap
       const rows = Math.ceil(resized.length / cols)
@@ -622,19 +502,10 @@ app.post('/api/collage', upload.array('images', 20), async (req, res) => {
       })
     }
 
-    const compositeItems = resized.map((img, i) => ({
-      input: img.data,
-      left: positions[i].x,
-      top: positions[i].y,
-    }))
+    const compositeItems = resized.map((img, i) => ({ input: img.data, left: positions[i].x, top: positions[i].y }))
 
     let pipeline = sharp({
-      create: {
-        width: canvasWidth,
-        height: canvasHeight,
-        channels: 3,
-        background: { r: bgR, g: bgG, b: bgB },
-      },
+      create: { width: canvasWidth, height: canvasHeight, channels: 3, background: { r: bgR, g: bgG, b: bgB } },
     }).composite(compositeItems)
 
     let buffer
@@ -647,15 +518,12 @@ app.post('/api/collage', upload.array('images', 20), async (req, res) => {
     }
 
     const mimeMap = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }
-    const ext = format === 'jpg' ? 'jpg' : format
     res.setHeader('Content-Type', mimeMap[format])
-    res.setHeader('Content-Disposition', `attachment; filename="collage.${ext}"`)
+    res.setHeader('Content-Disposition', `attachment; filename="collage.${format}"`)
     return res.send(buffer)
   } catch (error) {
     console.error('Collage error:', error)
     return res.status(500).json({ error: error.message || 'Failed to create collage' })
-  } finally {
-    for (const p of inputPaths) await unlinkSafe(p)
   }
 })
 
@@ -665,28 +533,23 @@ app.post('/api/frame', upload.single('image'), async (req, res) => {
     return res.status(400).json({ error: 'No image file provided' })
   }
 
-  const inputPath = req.file.path
+  const inputBuffer = req.file.buffer
   const style = req.body.style || 'classic'
   const border = Math.max(10, Math.min(200, parseInt(req.body.borderSize) || 60))
   const format = ['jpg', 'png', 'webp'].includes(req.body.format) ? req.body.format : 'jpg'
 
   try {
-    const metadata = await sharp(inputPath).metadata()
+    const metadata = await sharp(inputBuffer).metadata()
     const imgWidth = metadata.width
     const imgHeight = metadata.height
 
     let buffer
 
     if (style === 'classic') {
-      // Gold frame with inner dark accent line
       const accent = Math.max(2, Math.round(border * 0.06))
       const outerW = imgWidth + border * 2
       const outerH = imgHeight + border * 2
-      const canvas = sharp({
-        create: { width: outerW, height: outerH, channels: 3, background: { r: 191, g: 155, b: 81 } },
-      })
 
-      // Inner accent rectangle
       const accentRect = Buffer.from(
         `<svg width="${outerW}" height="${outerH}">
           <rect x="${border - accent * 3}" y="${border - accent * 3}"
@@ -698,100 +561,75 @@ app.post('/api/frame', upload.single('image'), async (req, res) => {
         </svg>`
       )
 
-      const imageBuffer = await sharp(inputPath).rotate().toBuffer()
-      buffer = await canvas
-        .composite([
-          { input: accentRect, left: 0, top: 0 },
-          { input: imageBuffer, left: border, top: border },
-        ])
+      const imageBuffer = await sharp(inputBuffer).rotate().toBuffer()
+      buffer = await sharp({ create: { width: outerW, height: outerH, channels: 3, background: { r: 191, g: 155, b: 81 } } })
+        .composite([{ input: accentRect, left: 0, top: 0 }, { input: imageBuffer, left: border, top: border }])
         .png()
         .toBuffer()
     } else if (style === 'polaroid') {
-      // White border, thicker on bottom (like a polaroid)
       const bottomBorder = Math.round(border * 2.5)
       const outerW = imgWidth + border * 2
       const outerH = imgHeight + border + bottomBorder
 
-      const imageBuffer = await sharp(inputPath).rotate().toBuffer()
-      buffer = await sharp({
-        create: { width: outerW, height: outerH, channels: 3, background: { r: 255, g: 255, b: 255 } },
-      })
+      const imageBuffer = await sharp(inputBuffer).rotate().toBuffer()
+      buffer = await sharp({ create: { width: outerW, height: outerH, channels: 3, background: { r: 255, g: 255, b: 255 } } })
         .composite([{ input: imageBuffer, left: border, top: border }])
         .png()
         .toBuffer()
     } else if (style === 'shadow') {
-      // Image on white background with a dark shadow effect
       const shadowOffset = Math.round(border * 0.25)
-      const padding = border
-      const outerW = imgWidth + padding * 2 + shadowOffset
-      const outerH = imgHeight + padding * 2 + shadowOffset
+      const outerW = imgWidth + border * 2 + shadowOffset
+      const outerH = imgHeight + border * 2 + shadowOffset
 
       const shadowSvg = Buffer.from(
         `<svg width="${outerW}" height="${outerH}">
-          <rect x="${padding + shadowOffset}" y="${padding + shadowOffset}"
+          <rect x="${border + shadowOffset}" y="${border + shadowOffset}"
                 width="${imgWidth}" height="${imgHeight}"
                 rx="4" ry="4" fill="rgba(0,0,0,0.35)"/>
         </svg>`
       )
 
-      const imageBuffer = await sharp(inputPath).rotate().toBuffer()
-      buffer = await sharp({
-        create: { width: outerW, height: outerH, channels: 3, background: { r: 245, g: 245, b: 245 } },
-      })
-        .composite([
-          { input: shadowSvg, left: 0, top: 0 },
-          { input: imageBuffer, left: padding, top: padding },
-        ])
+      const imageBuffer = await sharp(inputBuffer).rotate().toBuffer()
+      buffer = await sharp({ create: { width: outerW, height: outerH, channels: 3, background: { r: 245, g: 245, b: 245 } } })
+        .composite([{ input: shadowSvg, left: 0, top: 0 }, { input: imageBuffer, left: border, top: border }])
         .png()
         .toBuffer()
     } else if (style === 'vintage') {
-      // Warm-toned double border: dark outer, cream inner mat
       const outerBorder = Math.round(border * 0.4)
       const innerBorder = border - outerBorder
       const outerW = imgWidth + (outerBorder + innerBorder) * 2
       const outerH = imgHeight + (outerBorder + innerBorder) * 2
 
-      const innerCanvas = await sharp({
-        create: { width: imgWidth + innerBorder * 2, height: imgHeight + innerBorder * 2, channels: 3, background: { r: 245, g: 235, b: 215 } },
-      })
-        .composite([{ input: await sharp(inputPath).rotate().toBuffer(), left: innerBorder, top: innerBorder }])
+      const innerCanvas = await sharp({ create: { width: imgWidth + innerBorder * 2, height: imgHeight + innerBorder * 2, channels: 3, background: { r: 245, g: 235, b: 215 } } })
+        .composite([{ input: await sharp(inputBuffer).rotate().toBuffer(), left: innerBorder, top: innerBorder }])
         .png()
         .toBuffer()
 
-      buffer = await sharp({
-        create: { width: outerW, height: outerH, channels: 3, background: { r: 62, g: 47, b: 34 } },
-      })
+      buffer = await sharp({ create: { width: outerW, height: outerH, channels: 3, background: { r: 62, g: 47, b: 34 } } })
         .composite([{ input: innerCanvas, left: outerBorder, top: outerBorder }])
         .png()
         .toBuffer()
     } else if (style === 'modern') {
-      // Thin dark border with generous white mat
       const thinBorder = Math.max(2, Math.round(border * 0.08))
       const matSize = border - thinBorder
       const outerW = imgWidth + (thinBorder + matSize) * 2
       const outerH = imgHeight + (thinBorder + matSize) * 2
 
-      const innerCanvas = await sharp({
-        create: { width: imgWidth + matSize * 2, height: imgHeight + matSize * 2, channels: 3, background: { r: 255, g: 255, b: 255 } },
-      })
-        .composite([{ input: await sharp(inputPath).rotate().toBuffer(), left: matSize, top: matSize }])
+      const innerCanvas = await sharp({ create: { width: imgWidth + matSize * 2, height: imgHeight + matSize * 2, channels: 3, background: { r: 255, g: 255, b: 255 } } })
+        .composite([{ input: await sharp(inputBuffer).rotate().toBuffer(), left: matSize, top: matSize }])
         .png()
         .toBuffer()
 
-      buffer = await sharp({
-        create: { width: outerW, height: outerH, channels: 3, background: { r: 30, g: 30, b: 30 } },
-      })
+      buffer = await sharp({ create: { width: outerW, height: outerH, channels: 3, background: { r: 30, g: 30, b: 30 } } })
         .composite([{ input: innerCanvas, left: thinBorder, top: thinBorder }])
         .png()
         .toBuffer()
     } else {
-      await unlinkSafe(inputPath)
       return res.status(400).json({ error: 'Unknown frame style' })
     }
 
-    // Convert to requested output format
-    let pipeline = sharp(buffer)
     const mimeMap = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }
+    let pipeline = sharp(buffer)
     if (format === 'png') {
       pipeline = pipeline.png()
     } else if (format === 'webp') {
@@ -805,10 +643,8 @@ app.post('/api/frame', upload.single('image'), async (req, res) => {
 
     res.setHeader('Content-Type', mimeMap[format])
     res.setHeader('Content-Disposition', `attachment; filename="framed.${ext}"`)
-    await unlinkSafe(inputPath)
     return res.send(outputBuffer)
   } catch (error) {
-    await unlinkSafe(inputPath)
     console.error('Frame error:', error)
     return res.status(500).json({ error: error.message || 'Failed to add frame' })
   }
@@ -816,6 +652,4 @@ app.post('/api/frame', upload.single('image'), async (req, res) => {
 
 app.listen(8000, () => {
   console.log('Server running at http://localhost:8000')
-  console.log('Open http://localhost:8000 in your browser to use the GIF converter')
-  console.log('Note: Make sure FFmpeg is installed on your system')
 })
